@@ -7,12 +7,14 @@ class TestTreeOperations : public BaseTestCase
     Q_OBJECT    
 
 private slots:
-    void testCreation();  
+    void testCreation();
     
     void testGetDatabases();
-    void testGetDatabasesWithSelectScan();
     
-    void testGetDatabaseKeys();
-    void testGetDatabaseKeys_data();
+    void testLoadNamespaceItems();
+    void testLoadNamespaceItems_data();
+
+    void testFlushDb();
+    void testFlushDbCommandError();
 };
 

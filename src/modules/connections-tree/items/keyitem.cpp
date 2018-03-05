@@ -1,15 +1,19 @@
 #include "keyitem.h"
 #include <QMenu>
+#include <QMessageBox>
 #include <qredisclient/utils/text.h>
 
+#include "connections-tree/model.h"
 #include "connections-tree/utils.h"
 
 using namespace ConnectionsTree;
 
 KeyItem::KeyItem(const QByteArray &fullPath, unsigned short dbIndex,
                  QSharedPointer<Operations> operations,
-                 QWeakPointer<TreeItem> parent)
-    : m_fullPath(fullPath),
+                 QWeakPointer<TreeItem> parent,
+                 Model& model)
+    : TreeItem(model),
+      m_fullPath(fullPath),
       m_dbIndex(dbIndex),
       m_operations(operations),
       m_parent(parent),      
@@ -22,6 +26,17 @@ KeyItem::KeyItem(const QByteArray &fullPath, unsigned short dbIndex,
     m_eventHandlers.insert("mid-click", [this]() {
         if (isEnabled()) m_operations->openKeyTab(*this, true);
     });
+
+    m_eventHandlers.insert("delete", [this]() {
+        confirmAction(nullptr,
+                      QObject::tr("Do you really want to delete this key?"),
+                      [this]()
+        {
+            m_operations->deleteDbKey(*this, [](const QString& error){
+                QMessageBox::warning(nullptr, QObject::tr("Key error"), error);
+            });
+        });
+    });
 }
 
 QString KeyItem::getDisplayName() const
@@ -32,11 +47,6 @@ QString KeyItem::getDisplayName() const
 QByteArray KeyItem::getName() const
 {
     return m_fullPath;
-}
-
-QString KeyItem::getIconUrl() const
-{
-    return QString("qrc:/images/key.svg");
 }
 
 QList<QSharedPointer<TreeItem>> KeyItem::getAllChilds() const
@@ -66,7 +76,11 @@ QWeakPointer<TreeItem> KeyItem::parent() const
 
 bool KeyItem::isEnabled() const
 {
-    return isLocked() == false && m_removed == false;
+    if (!m_removed && m_parent) {
+        return m_parent.toStrongRef()->isEnabled();
+    } else {
+        return m_removed == false;
+    }
 }
 
 QByteArray KeyItem::getFullPath() const
@@ -82,4 +96,6 @@ int KeyItem::getDbIndex() const
 void KeyItem::setRemoved()
 {
     m_removed = true;
+
+    emit m_model.itemChanged(getSelf());
 }

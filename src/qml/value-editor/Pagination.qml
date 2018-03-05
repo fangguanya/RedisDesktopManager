@@ -7,7 +7,7 @@ ColumnLayout {
         Layout.fillWidth: true
 
         Text {
-            text: "Page "
+            text: qsTr("Page") + " "
             wrapMode: Text.WrapAnywhere
         }
 
@@ -29,7 +29,7 @@ ColumnLayout {
     Button {        
         Layout.maximumWidth: 200
         Layout.fillWidth: true
-        text: "Set Page"
+        text: qsTr("Set Page")
         onClicked: table.goToPage(pageField.text)
     }
 
@@ -46,6 +46,7 @@ ColumnLayout {
             Layout.fillWidth: true
             text: "⇨"
             onClicked: table.goToNextPage()
+            objectName: "rdm_value_editor_next_page_button"
         }
     }
 }

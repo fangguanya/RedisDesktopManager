@@ -8,16 +8,17 @@ namespace ConnectionsTree {
 class KeyItem : public TreeItem
 {
 public:
-    KeyItem(const QByteArray& fullPath, unsigned short int dbIndex,
-            QSharedPointer<Operations> operations, QWeakPointer<TreeItem> parent);
+    KeyItem(const QByteArray& fullPath,
+            unsigned short int dbIndex,
+            QSharedPointer<Operations> operations,
+            QWeakPointer<TreeItem> parent,
+            Model &model);
 
     QString getDisplayName() const override;
 
-    QByteArray getName() const override;
+    QByteArray getName() const override;    
 
-    QString getIconUrl() const override;
-
-    QString getType() const override { return "key"; }
+    QString getType() const override { return "key"; }    
 
     QList<QSharedPointer<TreeItem>> getAllChilds() const override;
 

@@ -28,8 +28,7 @@ public:
         keyType,        
         showValueNavigation,
         columnNames,
-        count,
-        keyValue
+        count
     };
 
 public:
@@ -54,7 +53,6 @@ public: // methods exported to QML
 signals:
     void keyError(int index, const QString& error);
     void replaceTab(int index);
-    void closeWelcomeTab();
     void newKeyDialog(QString dbIdentificationString, QString keyPrefix);
 
 public slots:
@@ -62,14 +60,16 @@ public slots:
                           std::function<void()>, int dbIndex, QString keyPrefix);
     void openTab(QSharedPointer<RedisClient::Connection> connection,
                  ConnectionsTree::KeyItem& key, bool inNewTab);
-    void closeDbKeys(QSharedPointer<RedisClient::Connection> connection, int dbIndex);
+    void closeDbKeys(QSharedPointer<RedisClient::Connection> connection, int dbIndex,
+                     const QRegExp& filter);
 
 private:
     QList<QSharedPointer<Model>> m_valueModels;
     QSharedPointer<AbstractKeyFactory> m_keyFactory;
     int m_currentTabIndex;
 
-    QPair<QSharedPointer<RedisClient::Connection>, int> m_newKeyRequest;
+    typedef QPair<QWeakPointer<RedisClient::Connection>, int> NewKeyRequest;
+    NewKeyRequest m_newKeyRequest;
     std::function<void()> m_newKeyCallback;
 
     bool isIndexValid(const QModelIndex &index) const;

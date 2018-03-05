@@ -1,12 +1,23 @@
 language: cpp
+dist: trusty
+sudo: required
+
 os:
   - linux
   - osx
-dist: trusty
-before_install:
-- if [ "$TRAVIS_OS_NAME" == "osx" ]; then brew update > /dev/null; brew install qt5 > /dev/null; export PATH=/usr/local/opt/qt5/bin/:$PATH; fi
+  
+install:
+- if [ "$TRAVIS_OS_NAME" == "osx" ]; then 
+       brew update > /dev/null
+    && brew install qt5 > /dev/null
+    && export PATH=/usr/local/opt/qt5/bin/:$PATH
+    ;
+  fi
 - cd ./src && ./configure && cd ./../
-- if [ "$TRAVIS_OS_NAME" == "linux" ]; then source /opt/qt55/bin/qt55-env.sh; fi
+- if [ "$TRAVIS_OS_NAME" == "linux" ]; then
+       source /opt/qt59/bin/qt59-env.sh
+       ; 
+  fi
 - qmake -v
 script:
   - git submodule update --init --recursive 
@@ -15,11 +26,14 @@ script:
   - ./../bin/tests/tests -platform minimal -txt
   - ./../bin/tests/qml_tests -platform minimal -txt
   - cd ./../src
-  - qmake && make -s -j 2
+  - if [ "$TRAVIS_OS_NAME" == "linux" ]; then
+       qmake && make -s -j 2
+       ; 
+    fi
 after_success:
   - cd ./../tests
-  - sudo pip install cpp-coveralls
-  - coveralls -b `pwd`/unit_tests/ -r `readlink -m ./../` -e 3rdparty/ -e tests/ -E .+/moc_.* -E .+/qrc_.* -E .+/qxt.* -E .+/ui_.*  > coveralls.log
+  - sudo pip install --upgrade cpp-coveralls
+  - coveralls -b `pwd`/unit_tests/ -r `readlink -m ./../` -e 3rdparty/ -e tests/ -E .+/moc_.* -E .+/qrc_.* -E .+/qxt.* -E .+/ui_.*
 services:
   - redis-server
 notifications:

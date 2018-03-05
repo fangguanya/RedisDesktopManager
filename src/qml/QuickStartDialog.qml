@@ -6,7 +6,8 @@ import "./common"
 
 Dialog {
     id: root
-    title: "Explore Redis Desktop Manager"
+    objectName: "rdm_quick_start_dialog"
+    title: qsTr("Explore Redis Desktop Manager")
 
     contentItem: Item {
         implicitWidth: msgLayout.implicitWidth + 50
@@ -24,9 +25,8 @@ Dialog {
 
                 RichTextWithLinks {
 
-                    html: "<p style='font-size: 13pt;'>Before using Redis Desktop Manager (RDM) take a look on the "
-                          + "<a href='https://github.com/uglide/RedisDesktopManager/wiki/Quick-Start'>Quick Start Guide</a>"
-                          + "</p>"
+                    html: "<p style='font-size: 13pt;'>" + qsTr("Before using Redis Desktop Manager (RDM) take a look on the %1").arg(
+                              "<a href='http://docs.redisdesktop.com/en/latest/quick-start/'>" + qsTr("Quick Start Guide")+ "</a>") + "</p>"
                 }
             }
 
@@ -35,7 +35,8 @@ Dialog {
 
                 Item { Layout.fillWidth: true; }
                 Button {
-                    text: "Ok"
+                    objectName: "rdm_quick_start_dialog_ok_btn"
+                    text: qsTr("OK")
                     onClicked: root.close()
                 }
             }

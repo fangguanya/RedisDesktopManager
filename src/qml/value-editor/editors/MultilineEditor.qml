@@ -1,107 +1,236 @@
 import QtQuick 2.0
 import QtQuick.Controls 1.2
+import QtQuick.Controls.Styles 1.2
 import QtQuick.Layouts 1.1
-
+import Qt.labs.settings 1.0
+import "../../common/"
 import "./formatters/formatters.js" as Formatters
 
 ColumnLayout
 {
     id: root
 
-    property alias enabled: textArea.enabled
-    property alias textColor: textArea.textColor
-    property alias style: textArea.style
+    property bool enabled
+    property string textColor
+    property string backgroundColor
     property bool showFormatters: true
-    property string fieldLabel: "Value:"
-    property var value
+    property string fieldLabel: qsTr("Value:")    
+    property bool isEdited: false
+    property var value    
+    property int valueSizeLimit: 150000
 
-    function getText() {
-        if (textArea.formatter.binary)
-            return binaryUtils.binaryListToValue(textArea.formatter.getRaw(textArea.text))
-        else
-            return textArea.formatter.getRaw(textArea.text)
+    function initEmpty() {
+        // init editor with empty model
+        textView.model = qmlUtils.wrapLargeText("")
+        textView.readOnly = false
+        textView.textFormat = TextEdit.PlainText
     }
 
-    function setValue(val) {
-        value = val
-        var isBin = binaryUtils.isBinaryString(val)
+    function validate(callback) {
+        loadRawValue(function (error, raw) {            
 
-        binaryFlag.visible = false
+            if (error) {                
+                notification.showError(error)
+                return callback(false);
+            }            
 
-        if (isBin) binaryFlag.visible = true        
+            var valid = qmlUtils.binaryStringLength(raw) > 0
 
-        autoDetectFormatter(isBin)
+            if (valid) {
+                hideValidationError()
+            } else {
+                showValidationError("Enter value")
+            }
+
+            return callback(valid)
+        });
     }
 
-    function autoDetectFormatter(isBinary) {
-        formatterSelector.currentIndex = Formatters.guessFormatter(isBinary, value)
+    function loadRawValue(callback) {                       
+       var formatter = formatterSelector.model[formatterSelector.currentIndex]
+
+        formatter.instance.getRaw(textView.model.getText(), function (error, raw) {
+            root.value = raw
+            return callback(error, raw)
+        })
+    }
+
+    function loadFormattedValue(val) {
+        if (val) {
+            root.value = val
+        }
+
+        if (!root.value) {
+            console.log("Empty value. Skipping formatting stage");
+            return;
+        }
+
+        if (binaryUtils.binaryStringLength(root.value) > valueSizeLimit) {
+            root.showFormatters = false
+            formatterSelector.currentIndex = 0
+        } else {
+            root.showFormatters = true
+        }
+
+        var isBin = binaryUtils.isBinaryString(root.value)
+
+        binaryFlag.visible = false        
+
+        if (isBin) {
+            binaryFlag.visible = true
+            formatterSelector.currentIndex = 2
+        }
+
+        var formatter = formatterSelector.model[formatterSelector.currentIndex]
+
+        uiBlocker.visible = true                
+
+        formatter.instance.getFormatted(root.value, function (error, formatted, isReadOnly, format) {
+
+            if (error || !formatted) {
+                uiBlocker.visible = false
+                formatterSelector.currentIndex = 0 // Reset formatter to plain text
+                notification.showError(error || qsTr("Unknown formatter error (Empty response)"))
+                return
+            }
+
+            if (format === "json") {
+                // 1 is JSON
+                return formatterSelector.model[1].instance.getFormatted(formatted, function (formattedJson, r, f) {
+                    textView.model = qmlUtils.wrapLargeText(formattedJson)
+                    textView.readOnly = isReadOnly
+                    textView.textFormat = TextEdit.PlainText
+                    root.isEdited = false
+                    uiBlocker.visible = false
+                })
+            } else {                
+                textView.model = qmlUtils.wrapLargeText(formatted)
+                textView.readOnly = isReadOnly
+                root.isEdited = false
+
+                if (format === "html")
+                    textView.textFormat = TextEdit.RichText
+                else
+                    textView.textFormat = TextEdit.PlainText
+            }
+
+            uiBlocker.visible = false
+        })
+    }
+
+    function reset() {
+        if (textView.model)
+            textView.model.cleanUp()
+
+        if (textView.model) {
+            qmlUtils.deleteTextWrapper(textView.model)
+        }
+
+        textView.model = null
+        root.value = ""
+        root.isEdited = false
+        hideValidationError()
+    }
+
+    function showValidationError(msg) {
+        validationError.text = msg
+        validationError.visible = true
+    }
+
+    function hideValidationError() {
+        validationError.visible = false
     }
 
     RowLayout{
-        visible: showFormatters
         Layout.fillWidth: true
 
         Text { text: root.fieldLabel }
-        Text { id: binaryFlag; text: "[Binary]"; visible: false; color: "green"; }
-        Text { id: compressedFlag; text: "[GZIP compressed]"; visible: false; color: "red"; } // TBD
+        TextEdit { text: qsTr("size: ") + binaryUtils.humanSize(binaryUtils.binaryStringLength(value)); readOnly: true; color: "#ccc"  }
+        Text { id: binaryFlag; text: qsTr("[Binary]"); visible: false; color: "green"; }        
         Item { Layout.fillWidth: true }
-        Text { text: "View as:" }
+        Text { visible: showFormatters; text: qsTr("View as:") }
 
         ComboBox {
             id: formatterSelector
+            visible: showFormatters
             width: 200
-            model: formattersModel
+            model: Formatters.buildFormattersModel()
             textRole: "name"
+            objectName: "rdm_value_editor_formatter_combobox"
 
-            onCurrentIndexChanged: Formatters.defaultFormatterIndex = currentIndex
-            Component.onCompleted: currentIndex = Formatters.defaultFormatterIndex
-        }
+            onCurrentIndexChanged: loadFormattedValue()
 
-        ListModel {
-            id: formattersModel
-
-            Component.onCompleted: {
-                for (var index in Formatters.enabledFormatters) {
-                    var f = Formatters.enabledFormatters[index]
-                    var title = f.readOnly ? f.title + " (READ ONLY)" : f.title
-                    append({'name': title})
-                }
+            Settings {
+                id: defaultFormatterSettings
+                category: "formatters"
+                property alias defaultFormatterIndex: formatterSelector.currentIndex
             }
         }
+
+        Text { visible: !showFormatters && binaryUtils.binaryStringLength(root.value) > valueSizeLimit; text: qsTr("Large value (>150kB). Formatters is not available."); color: "red"; }
     }
 
-    TextArea
-    {
-        id: textArea
-        Layout.fillWidth: true        
+    Rectangle {
+        id: texteditorWrapper
+        Layout.fillWidth: true
         Layout.fillHeight: true
-        Layout.preferredHeight: 100        
-        textFormat: formatter && formatter.htmlOutput ? TextEdit.RichText : TextEdit.PlainText
-        readOnly: (formatter)? formatter.readOnly : enabled ? true : false
+        Layout.preferredHeight: 100
+        objectName: "rdm_key_multiline_text_field"
 
-        onEnabledChanged: {
-            console.log("Text editor was disabled")
-        }
+        color: "white"
+        border.color: "#cccccc"
+        border.width: 1
 
-        text: {
-            if (!formatter) return ''
-            var val
-            if (formatter.binary === true)
-                val = formatter.getFormatted(binaryUtils.valueToBinary(value))
-            else
-                val = formatter.getFormatted(binaryUtils.toUtf(value))
+        ScrollView {
+            anchors.fill: parent
+            anchors.margins: 5
 
-            if (val === undefined) {
-                formatterSelector.currentIndex = 0
-                binaryFlag.visible = false
-            }
+            ListView {
+                id: textView
+                anchors.fill: parent
+                cacheBuffer: 0
 
-            return (val === undefined) ? '' : val
-        }
+                property int textFormat: TextEdit.PlainText
+                property bool readOnly: false
 
-        property var formatter: {
-            var index = formatterSelector.currentIndex ? formatterSelector.currentIndex : Formatters.defaultFormatterIndex
-            return Formatters.enabledFormatters[index]
-        }
+                delegate:
+                    NewTextArea {
+                        id: textAreaPart
+                        width: textView.width
+                        height: textAreaPart.contentHeight < texteditorWrapper.height? texteditorWrapper.height - 5 : textAreaPart.contentHeight
+
+                        enabled: root.enabled
+                        text: value
+
+                        textFormat: textView.textFormat
+                        readOnly: textView.readOnly
+
+                        onTextChanged: {
+                            root.isEdited = true
+                            textView.model && textView.model.setTextChunk(index, textAreaPart.text)
+                        }
+                    }
+                }
+            }            
     }
+
+    Text {
+        id: validationError
+        color: "red"
+        visible: false
+    }
+
+    Rectangle {
+        id: uiBlocker
+        visible: false
+        anchors.fill: parent
+        color: Qt.rgba(0, 0, 0, 0.1)
+
+        Item {
+            anchors.fill: parent
+            BusyIndicator { anchors.centerIn: parent; running: true }
+        }
+
+        MouseArea { anchors.fill: parent }
+    }    
 }

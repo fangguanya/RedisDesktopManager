@@ -1,95 +1,90 @@
 #include "namespaceitem.h"
 #include <QMenu>
+#include <QMessageBox>
+#include "connections-tree/utils.h"
+#include "connections-tree/model.h"
+#include "databaseitem.h"
+#include "keyitem.h"
 
 using namespace ConnectionsTree;
 
 NamespaceItem::NamespaceItem(const QByteArray &fullPath,
                              QSharedPointer<Operations> operations,
-                             QWeakPointer<TreeItem> parent)
-    : m_fullPath(fullPath),
-      m_operations(operations),
-      m_parent(parent),
-      m_locked(false)
+                             QWeakPointer<TreeItem> parent,
+                             Model &model, uint dbIndex)
+    : AbstractNamespaceItem(model, parent, operations, dbIndex),
+      m_fullPath(fullPath),
+      m_removed(false)
 {
-    m_displayName = m_fullPath.mid(m_fullPath.lastIndexOf(m_operations->getNamespaceSeparator())+1);
+    m_displayName = m_fullPath.mid(m_fullPath.lastIndexOf(m_operations->getNamespaceSeparator()) + 1);
+
+    m_eventHandlers.insert("click", [this]() {
+        if (m_childItems.size() == 0) {          
+            lock();
+            load();
+        } else if (!isExpanded())  {
+            setExpanded(true);
+            emit m_model.itemChanged(getSelf());
+            emit m_model.expandItem(getSelf());
+        }
+    });
+
+    m_eventHandlers.insert("reload", [this]() {
+        lock();
+
+        if (m_childItems.size()) {
+            clear();
+        }
+
+        load();
+    });
+
+    m_eventHandlers.insert("delete", [this]() {
+        m_operations->deleteDbNamespace(*this);
+    });
 }
 
 QString NamespaceItem::getDisplayName() const
 {    
-    return QString("%1 (%2)").arg(m_displayName).arg(childCount(true));
-}
-
-QString NamespaceItem::getDisplayPart() const
-{
-    return m_displayName;
+    return QString("%1 (%2)").arg(QString::fromUtf8(m_displayName)).arg(childCount(true));
 }
 
 QByteArray NamespaceItem::getName() const
 {
-    return m_fullPath;
-}
-
-QString NamespaceItem::getIconUrl() const
-{    
-    return QString("qrc:/images/namespace.svg");
-}
-
-QList<QSharedPointer<TreeItem> > NamespaceItem::getAllChilds() const
-{
-    return m_childItems;
-}
-
-uint NamespaceItem::childCount(bool recursive) const
-{
-    if (!recursive)
-        return m_childItems.size();
-
-    uint count = 0;
-    for (auto item : m_childItems) {
-        if (item->supportChildItems()) {
-            count += item->childCount(true);
-        } else {
-            count += 1;
-        }
-    }
-    return count;
-}
-
-QSharedPointer<TreeItem> NamespaceItem::child(uint row) const
-{    
-    if (row < m_childItems.size())
-        return m_childItems.at(row);
-
-    return QSharedPointer<TreeItem>();
-}
-
-QWeakPointer<TreeItem> NamespaceItem::parent() const
-{
-    return m_parent;
-}
-
-bool NamespaceItem::isLocked() const
-{
-    return m_locked;
+    return m_displayName;
 }
 
 bool NamespaceItem::isEnabled() const
 {
-    return true;
+    return m_removed == false;
 }
 
-void NamespaceItem::append(QSharedPointer<TreeItem> item)
+QByteArray NamespaceItem::getFullPath() const
 {
-    if (typeid(NamespaceItem)==typeid(*item)) {
-        m_childNamespaces[item.staticCast<NamespaceItem>()->getDisplayPart()] = qSharedPointerCast<NamespaceItem>(item);
-    }
-    m_childItems.append(item);
+    return m_fullPath;
 }
 
-QSharedPointer<NamespaceItem> NamespaceItem::findChildNamespace(const QString &name)
+void NamespaceItem::setRemoved()
 {
-    if (!m_childNamespaces.contains(name))
-        return QSharedPointer<NamespaceItem>();
+    m_removed = true;
 
-    return m_childNamespaces[name];
+    clear();
+
+    emit m_model.itemChanged(getSelf());
+}
+
+void NamespaceItem::load()
+{
+    QString nsFilter = QString("%1%2*").arg(QString::fromUtf8(m_fullPath)).arg(m_operations->getNamespaceSeparator());
+
+    m_operations->loadNamespaceItems(qSharedPointerDynamicCast<AbstractNamespaceItem>(getSelf()),
+                                     nsFilter, [this](const QString& err) {
+        unlock();
+        if (!err.isEmpty())
+            return showLoadingError(err);
+
+        setExpanded(true);
+        emit m_model.itemChanged(getSelf());
+        emit m_model.expandItem(getSelf());
+    });
 }

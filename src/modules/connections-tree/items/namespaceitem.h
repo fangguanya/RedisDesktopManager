@@ -1,49 +1,37 @@
 #pragma once
-#include "treeitem.h"
-#include "connections-tree/operations.h"
+#include "abstractnamespaceitem.h"
 
 namespace ConnectionsTree {
 
-class NamespaceItem : public TreeItem
+class NamespaceItem : public QObject, public AbstractNamespaceItem
 {
+     Q_OBJECT
+
 public:
-    NamespaceItem(const QByteArray& fullPath,
+    NamespaceItem(const QByteArray& fullPath,                  
                   QSharedPointer<Operations> operations,
-                  QWeakPointer<TreeItem> parent);
+                  QWeakPointer<TreeItem> parent,
+                  Model& model,
+                  uint dbIndex);
 
-    QString getDisplayName() const override;
-
-    QString getDisplayPart() const;
+    QString getDisplayName() const override;    
 
     QByteArray getName() const override;
 
-    QString getIconUrl() const override;
+    QByteArray getFullPath() const;
 
-    QString getType() const override { return "namespace"; }
+    QString getType() const override { return "namespace"; }    
 
-    QList<QSharedPointer<TreeItem>> getAllChilds() const override;
+    bool isEnabled() const override;        
 
-    uint childCount(bool recursive = false) const override;
+    void setRemoved();
 
-    QSharedPointer<TreeItem> child(uint row) const override;
-
-    QWeakPointer<TreeItem> parent() const override;
-
-    bool isLocked() const override;
-
-    bool isEnabled() const override;
-
-    void append(QSharedPointer<TreeItem> item);
-
-    QSharedPointer<NamespaceItem> findChildNamespace(const QString& name);
+protected:
+    void load();
 
 private:
-    QByteArray m_fullPath;
-    QString m_displayName;
-    QSharedPointer<Operations> m_operations;
-    QWeakPointer<TreeItem> m_parent;
-    bool m_locked;
-    QList<QSharedPointer<TreeItem>> m_childItems;
-    QHash<QString, QSharedPointer<NamespaceItem>> m_childNamespaces;
+    QByteArray m_fullPath;    
+    QByteArray m_displayName;
+    bool m_removed;    
 };
 }

@@ -9,13 +9,7 @@
 	url = https://github.com/uglide/qredisclient.git
 [submodule "3rdparty/gbreakpad"]
 	path = 3rdparty/gbreakpad
-	url = https://chromium.googlesource.com/breakpad/breakpad
-[submodule "3rdparty/qgamp"]
-	path = 3rdparty/qgamp
-	url = https://github.com/uglide/qgamp.git
-[submodule "src/modules/code-editor/ace"]
-	path = src/modules/code-editor/ace
-	url = https://github.com/ajaxorg/ace-builds.git
-[submodule "src/qml/3rdparty/php-unserialize-js"]
-	path = src/qml/3rdparty/php-unserialize-js
-	url = https://github.com/uglide/php-unserialize-js.git
+	url = https://github.com/google/breakpad.git
+[submodule "3rdparty/asyncfuture"]
+	path = 3rdparty/asyncfuture
+	url = https://github.com/benlau/asyncfuture.git

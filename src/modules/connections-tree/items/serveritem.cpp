@@ -7,52 +7,57 @@
 #include <QMessageBox>
 
 #include"connections-tree/utils.h"
+#include "connections-tree/model.h"
 #include "databaseitem.h"
+
 
 using namespace ConnectionsTree;
 
 ServerItem::ServerItem(const QString& name, QSharedPointer<Operations> operations,
-                       const Model& model)
-    : m_name(name),
-      m_locked(false),
-      m_databaseListLoaded(false),
+                       Model& model)
+    : TreeItem(model),
+      m_name(name),       
       m_row(0),
-      m_operations(operations),
-      m_model(model)
+      m_operations(operations)
 {
 
     m_eventHandlers.insert("click", [this]() {
-        if (m_databaseListLoaded)
+        if (isDatabaseListLoaded())
             return;
 
-        load();
+        load();        
     });
 
     m_eventHandlers.insert("console", [this]() {
         m_operations->openConsoleTab();
     });
 
+    m_eventHandlers.insert("server_info", [this]() {
+        m_operations->openServerStats();
+    });
+
     m_eventHandlers.insert("reload", [this]() {
         reload();
+        emit m_model.itemChanged(getSelf());
     });
 
     m_eventHandlers.insert("unload", [this]() {
-        unload();
+        unload();        
     });
 
     m_eventHandlers.insert("edit", [this]() {
-        confirmAction(nullptr, tr("All value and console tabs related to this"
+        confirmAction(nullptr, tr("Value and Console tabs related to this "
                                   "connection will be closed. Do you want to continue?"), [this]()
          {
-             unload();
+             unload();             
              emit editActionRequested();
          });
     });
 
     m_eventHandlers.insert("delete", [this]() {
-        confirmAction(nullptr, tr("Do you really want delete connection?"), [this]()
+        confirmAction(nullptr, tr("Do you really want to delete connection?"), [this]()
          {
-             unload();
+             unload();             
              emit deleteActionRequested();
          });
     });
@@ -65,13 +70,6 @@ ServerItem::~ServerItem()
 QString ServerItem::getDisplayName() const
 {
     return m_name;
-}
-
-QString ServerItem::getIconUrl() const
-{
-    if (m_locked)    return QString("qrc:/images/wait.svg");
-    if (m_databaseListLoaded) return QString("qrc:/images/server.svg");
-    return QString("qrc:/images/server.svg"); //offline
 }
 
 QList<QSharedPointer<TreeItem> > ServerItem::getAllChilds() const
@@ -108,11 +106,6 @@ void ServerItem::setRow(int r)
     m_row = r;
 }
 
-bool ServerItem::isLocked() const
-{
-    return m_locked;
-}
-
 bool ServerItem::isEnabled() const
 {
     return true;
@@ -120,66 +113,55 @@ bool ServerItem::isEnabled() const
 
 bool ServerItem::isDatabaseListLoaded() const
 {
-    return m_databaseListLoaded;
+    return isLocked() == false && m_databases.size() > 0;
 }
 
 void ServerItem::load()
 { 
-    m_locked = true;
-    emit updateIcon();
+    lock();    
 
-    std::function<void(Operations::DatabaseList)> callback = [this](Operations::DatabaseList databases) {
+    std::function<void(RedisClient::DatabaseList)> callback = [this](RedisClient::DatabaseList databases) {
 
         if (databases.size() == 0)
         {
-            m_locked = false;
+            unlock();
             return;
         }
 
-        Operations::DatabaseList::const_iterator db = databases.constBegin();
+        RedisClient::DatabaseList::const_iterator db = databases.constBegin();
         while (db != databases.constEnd()) {
-            QSharedPointer<TreeItem> database((new DatabaseItem(db->first, db->second, m_operations, m_self)));
-
-            QObject::connect(dynamic_cast<QObject*>(database.data()), SIGNAL(keysLoaded(unsigned int)),
-                             this, SIGNAL(keysLoadedInDatabase(unsigned int)));
-            QObject::connect(dynamic_cast<QObject*>(database.data()), SIGNAL(unloadStarted(unsigned int)),
-                             this, SIGNAL(unloadStartedInDatabase(unsigned int)));
-            QObject::connect(dynamic_cast<QObject*>(database.data()), SIGNAL(updateIcon(unsigned int)),
-                             this, SIGNAL(updateDbIcon(unsigned int)));
-            QObject::connect(database.dynamicCast<DatabaseItem>().data(), &DatabaseItem::error,
-                             this, &ServerItem::error);
+            QSharedPointer<TreeItem> database((new DatabaseItem(db.key(), db.value(), m_operations, m_self, m_model)));
 
             m_databases.push_back(database);
             ++db;            
-        }
-        m_locked = false;
-        m_databaseListLoaded = true;
+        }                
 
-        emit databaseListLoaded();
+        emit m_model.itemChildsLoaded(m_self);
+
+        unlock();        
     };
 
     try {
         m_operations->getDatabases(callback);
     } catch (const ConnectionsTree::Operations::Exception& e) {
-        m_locked = false;
-        emit error("Cannot load databases: " + QString(e.what()));
+        unlock();        
+        emit m_model.error(QObject::tr("Cannot load databases:\n\n") + QString(e.what()));
     }
 }
 
 void ServerItem::unload()
 {
-    if (!m_databaseListLoaded)
+    if (!isDatabaseListLoaded())
         return;
 
-    m_locked = true;
+    lock();
 
-    emit unloadStarted();
+    emit m_model.itemChildsUnloaded(m_self);
 
-    m_databaseListLoaded = false;
     m_operations->disconnect();
     m_databases.clear();        
 
-    m_locked = false;
+    unlock();
 }
 
 void ServerItem::reload()
@@ -213,4 +195,17 @@ void ServerItem::setName(const QString& name)
 void ServerItem::setWeakPointer(QWeakPointer<ServerItem> self)
 {
     m_self = self;
+}
+
+QVariantMap ConnectionsTree::ServerItem::metadata() const
+{
+    QVariantMap meta = TreeItem::metadata();
+
+    if (isDatabaseListLoaded()) {
+        meta["server_type"] = m_operations->mode();
+    } else {
+        meta["server_type"] = "unknown";
+    }
+
+    return meta;
 }

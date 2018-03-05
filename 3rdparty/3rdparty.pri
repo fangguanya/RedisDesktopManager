@@ -9,14 +9,12 @@ OTHER_FILES += $$PWD/../src/resources/qml/3rdparty/php-unserialize-js/phpUnseria
 # qredisclient
 include($$PWD/qredisclient/qredisclient.pri)
 
-#qgamp
-include($$PWD/qgamp/qgamp.pri)
-DEFINES += GMP_ID=\\\"UA-68484170-1\\\"
-
 # Easylogging
 INCLUDEPATH += $$PWD/easyloggingpp/src
 HEADERS += $$PWD/easyloggingpp/src/easylogging++.h
 
+# Asyncfuture
+include($$PWD/asyncfuture/asyncfuture.pri)
 
 # Google breakpad
 BREAKPADDIR = $$PWD/gbreakpad/src
@@ -26,12 +24,23 @@ INCLUDEPATH += $$BREAKPADDIR/
 INCLUDEPATH += $$BREAKPADDIR/src
 
 #breakpad app need debug info inside binaries
-QMAKE_CXXFLAGS+=-g
-QMAKE_CFLAGS_RELEASE+=-g
+win32-msvc* {
+    QMAKE_CXXFLAGS += /MP
+    QMAKE_LFLAGS_RELEASE += /MAP
+    QMAKE_CFLAGS_RELEASE += /Zi
+    QMAKE_LFLAGS_RELEASE += /debug /opt:ref
+} else {
+    QMAKE_CXXFLAGS+=-g
+    QMAKE_CFLAGS_RELEASE+=-g
+}
 
 win32* {    
-    # Workaround for mingw
-    QMAKE_LFLAGS_RELEASE=
+    win32-g++ {
+        # Workaround for mingw
+        QMAKE_LFLAGS_RELEASE=
+    } else {
+        INCLUDEPATH += $$PWD/qredisclient/3rdparty/windows/rmt_zlib.1.2.8.5/build/native/include
+    }
 
     HEADERS += $$BREAKPADDIR/common/windows/string_utils-inl.h
     HEADERS += $$BREAKPADDIR/common/windows/guid_string.h
@@ -62,9 +71,15 @@ unix:macx { # OSX
 unix:!macx { # ubuntu & debian
     QMAKE_CXXFLAGS += -std=gnu++0x #workaround for google breakpad
 
-    # clean default flags
-    QMAKE_LFLAGS_RPATH=
+    defined(CLEAN_RPATH, var) { # clean default flags
+        message("DEB package build")
+        QMAKE_LFLAGS_RPATH=
+        QMAKE_LFLAGS = -Wl,-rpath=\\\$$ORIGIN/../lib
+        QMAKE_LFLAGS += -static-libgcc -static-libstdc++
+    } else {
+        # Note: uncomment if qtcreator fails to find QtCore dependencies
+        #QMAKE_LFLAGS = -Wl,-rpath=/home/user/Qt5.9.3/5.9.3/gcc_64/lib
+    }
 
-    LIBS += -Wl,-rpath=\\\$$ORIGIN/../lib #don't remove!!!
     LIBS += $$BREAKPADDIR/client/linux/libbreakpad_client.a
 }

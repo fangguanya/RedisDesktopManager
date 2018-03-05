@@ -3,6 +3,10 @@
 #include <QApplication>
 #include <QDebug>
 #include <qredisclient/utils/text.h>
+#include <QtCharts/QDateTimeAxis>
+#include <QDateTime>
+
+#include "value-editor/largetextmodel.h"
 
 bool QmlUtils::isBinaryString(const QVariant &value)
 {
@@ -12,6 +16,33 @@ bool QmlUtils::isBinaryString(const QVariant &value)
     QByteArray val = value.toByteArray();
     return isBinary(val);
 }
+
+long QmlUtils::binaryStringLength(const QVariant &value)
+{
+    if (!value.canConvert(QVariant::ByteArray)) {
+        return -1;
+    }
+    QByteArray val = value.toByteArray();
+    return val.size();
+}
+
+QString QmlUtils::humanSize(long size)
+{
+    double num = size;
+    QStringList list;
+    list << "KB" << "MB" << "GB";
+
+    QStringListIterator i(list);
+    QString unit("bytes");
+
+    while(num >= 1024.0 && i.hasNext())
+     {
+        unit = i.next();
+        num /= 1024.0;
+    }
+    return QString().setNum(num,'f',2)+" "+unit;
+}
+
 
 QVariant QmlUtils::valueToBinary(const QVariant &value)
 {
@@ -37,13 +68,18 @@ QVariant QmlUtils::binaryListToValue(const QVariantList &binaryList)
     return value;
 }
 
-QVariant QmlUtils::printable(const QVariant &value)
+QVariant QmlUtils::printable(const QVariant &value, bool htmlEscaped)
 {
     if (!value.canConvert(QVariant::ByteArray)) {
         return QVariant();
     }
     QByteArray val = value.toByteArray();
-    return printableString(val);
+
+    if (htmlEscaped) {
+        return printableString(val).toHtmlEscaped();
+    } else {
+        return printableString(val);
+    }
 }
 
 QVariant QmlUtils::printableToValue(const QVariant &printable)
@@ -67,7 +103,7 @@ QVariant QmlUtils::toUtf(const QVariant &value)
 
 QString QmlUtils::getPathFromUrl(const QUrl &url)
 {
-    return url.path();
+    return url.isLocalFile() ? url.toLocalFile() : url.path();
 }
 
 void QmlUtils::copyToClipboard(const QString &text)
@@ -79,4 +115,58 @@ void QmlUtils::copyToClipboard(const QString &text)
 
     cb->clear();
     cb->setText(text);
+}
+
+QtCharts::QDateTimeAxis* findDateTimeAxis(QtCharts::QXYSeries *series)
+{
+    using namespace QtCharts;
+
+    QList<QAbstractAxis*> axes = series->attachedAxes();
+
+    QDateTimeAxis* ax = nullptr;
+
+    for (QAbstractAxis* axis : axes) {
+        if (axis->type() == QAbstractAxis::AxisTypeDateTime) {
+            ax = qobject_cast<QDateTimeAxis* >(axis);
+            return ax;
+        }
+    }
+
+    return ax;
+}
+
+void QmlUtils::addNewValueToDynamicChart(QtCharts::QXYSeries *series, double value)
+{    
+    using namespace QtCharts;
+
+    QDateTimeAxis* ax = findDateTimeAxis(series);
+
+    if (series->count() == 0 && ax) {
+        ax->setMin(QDateTime::currentDateTime());
+    }
+
+    series->append(QDateTime::currentDateTime().toMSecsSinceEpoch(), value);
+
+    if (series->attachedAxes().size() > 0 && ax) {
+        ax->setMax(QDateTime::currentDateTime());
+    }
+}
+
+QObject *QmlUtils::wrapLargeText(const QByteArray &text)
+{    
+    auto w = new ValueEditor::LargeTextWrappingModel(QString::fromUtf8(text));
+    w->setParent(this);
+    return w;
+}
+
+void QmlUtils::deleteTextWrapper(QObject *w)
+{
+    if (w && w->parent() == this) {
+        w->deleteLater();
+    }
+}
+
+QString QmlUtils::escapeHtmlEntities(const QString &t)
+{
+    return t.toHtmlEscaped();
 }

@@ -1,6 +1,9 @@
-.import "./msgpack.js" as MsgPack
 .import "./hexy.js" as Hexy
-.import "./php-unserialize.js" as PHPUnserialize
+.import "./json-tools.js" as JSONFormatter
+
+var FORMAT_PLAIN_TEXT = "plain_text"
+var FORMAT_JSON = "json"
+var FORMAT_HTML = "html"
 
 /**
   Plain formatter
@@ -8,60 +11,48 @@
 
 var plain = {
     title: "Plain Text",
-    readOnly: false,
-    binary: false,
-    htmlOutput: false,
 
-    getFormatted: function (raw) {        
-        return raw
-    },
+    getFormatted: function (raw, callback) {
+        return callback("", raw, false, FORMAT_PLAIN_TEXT)
+    },    
 
-    isValid: function (raw) {
-        return true
-    },
-
-    getRaw: function (formatted) {
-        return formatted
+    getRaw: function (formatted, callback) {
+        return callback("", formatted)
     }
 }
 
 var hex = {
     title: "HEX",
-    readOnly: false,
-    binary: true,
-    htmlOutput: false,
 
-    getFormatted: function (raw) {
-        return binaryUtils.printable(binaryUtils.binaryListToValue(raw))
-    },
+    getFormatted: function (raw, callback) {
 
-    isValid: function (raw) {
-        return binaryUtils.isBinaryString(binaryUtils.binaryListToValue(raw))
-    },
+        var isValid = binaryUtils.isBinaryString(raw)
 
-    getRaw: function (formatted) {
-        return binaryUtils.valueToBinary(binaryUtils.printableToValue(formatted))
+        if (isValid) {
+            return callback("", binaryUtils.printable(raw), false, FORMAT_PLAIN_TEXT)
+        } else {
+            return callback(qsTr("Value is not binary string"))
+        }
+    },    
+
+    getRaw: function (formatted, callback) {
+        return callback("", binaryUtils.printableToValue(formatted))
     }
 }
 
 var hexTable = {
     title: "HEX TABLE",
-    readOnly: true,
-    binary: true,
-    htmlOutput: true,
 
-    getFormatted: function (raw) {
-        var format = {'html': true}
-        return Hexy.hexy(raw, format)
-    },
+    getFormatted: function (raw, callback) {        
 
-    isValid: function (raw) {
-        return true
-    },
+        var isValid = binaryUtils.isBinaryString(raw)
 
-    getRaw: function (formatted) {
-        return ''
-    }
+        if (isValid) {
+            return callback("", Hexy.hexy(binaryUtils.valueToBinary(raw), {'html': true}), true, FORMAT_HTML)
+        } else {
+            return callback(qsTr("Value is not binary string"))
+        }
+    },    
 }
 
 /**
@@ -69,126 +60,62 @@ var hexTable = {
 **/
 var json = {
     title: "JSON",
-    readOnly: false,
-    binary: false,
-    htmlOutput: false,
 
-    getFormatted: function (raw) {
-
+    getFormatted: function (raw, callback) {
         try {
-            var parsed = JSON.parse(raw)
-            return JSON.stringify(parsed, undefined, 4)
-
+            return callback("", JSONFormatter.prettyPrint(String(raw)), false, FORMAT_PLAIN_TEXT)
         } catch (e) {
-            return "Error: Invalid JSON"
+            return callback(qsTr("Error: Invalid JSON: ") + e)
         }
-    },
+    },    
 
-    isValid: function (raw) {
+    getRaw: function (formatted, callback) {
         try {
-            JSON.parse(raw)
-            return true
+            return callback("", JSONFormatter.minify(formatted))
         } catch (e) {
-            return false
-        }
-    },
-
-    getRaw: function (formatted) {        
-        try {
-            var parsed = JSON.parse(formatted)
-            return JSON.stringify(parsed)
-
-        } catch (e) {
-            return formatted
+            return callback(qsTr("Error: ") + e)
         }
     }
 }
 
-/**
-  MsgPack formatter
-**/
-var msgpack = {
-    title: "MSGPACK",
-    readOnly: false,
-    binary: true,
-    htmlOutput: false,
+var enabledFormatters = [plain, json, hex, hexTable]
 
-    getFormatted: function (raw) {
-        try {
-            var parsed = MsgPack.msgpack().unpack(raw)
-            console.log('parsed msgpack:', parsed)
-            return JSON.stringify(parsed, undefined, 4)
 
-        } catch (e) {
-            return "Error: Invalid MSGPack or JSON" + e
-        }
-    },
-
-    isValid: function (raw) {
-        try {
-            return MsgPack.msgpack().unpack(raw) !== undefined
-        } catch (e) {
-            return false
-        }
-    },
-
-    getRaw: function (formatted) {
-        var obj = JSON.parse(formatted)
-        var compressed = MsgPack.msgpack().pack(obj)
-        return compressed
-    }
-}
-
-/**
-  PHP Serialize formatter
-**/
-var phpserialized = {
-    title: "PHP Serializer",
-    readOnly: true,    
-    binary: false,
-    htmlOutput: false,
-
-    getFormatted: function (raw) {
-
-        try {
-            var parsed = PHPUnserialize.unserialize(raw)
-            console.log('parsed php serialized:', JSON.stringify(parsed))
-            return JSON.stringify(parsed, undefined, 4)
-
-        } catch (e) {
-            return "Error: Invalid PHP Serialized String: " + JSON.stringify(e)
-        }
-    },
-
-    isValid: function (raw) {
-        try {
-            PHPUnserialize.unserialize(raw)
-            return true
-        } catch (e) {
-            return false
-        }
-    },
-
-    getRaw: function (formatted) {
-        var obj = JSON.parse(formatted)
-        return PHPSerialize.serialize(obj)
-    }
-}
-
-var defaultFormatterIndex = 0;                        
-var enabledFormatters = [plain, json, msgpack, hex, hexTable, phpserialized]
-
-function guessFormatter(isBinary, value)
+function buildFormattersModel()
 {
-    var tryFormatters = isBinary? [2, 5, 3, 4] : [1, 5, 2]
+    var formatters = []
 
-    for (var index in tryFormatters) {
-        var val = (enabledFormatters[tryFormatters[index]].binary) ?
-            binaryUtils.valueToBinary(value) : binaryUtils.toUtf(value)
+    for (var index in enabledFormatters) {
+        var f = enabledFormatters[index]
+        formatters.push({'name': f.title, 'type': "buildin", "instance": f})
+    }
 
-        if (enabledFormatters[tryFormatters[index]].isValid(val)){
-            return tryFormatters[index]
+    var nativeFormatters = formattersManager.getPlainList();
+
+    function createWrapperForNativeFormatter(formatterName) {
+        return {
+            getFormatted: function (raw, callback) {
+                return formattersManager.decode(formatterName, raw, callback)
+            },
+
+            getRaw: function (formatted, callback) {
+                return formattersManager.encode(formatterName, formatted, callback)
+            }
         }
     }
-    return 0 // Plain text
+
+    for (var index in nativeFormatters) {
+        formatters.push({
+                   'name': nativeFormatters[index],
+                   'type': "external",
+                   'instance': createWrapperForNativeFormatter(nativeFormatters[index])
+               })
+    }
+
+    return formatters
+}
+
+function guessFormatter(isBinary)
+{
+   return isBinary? 2 : 0
 }

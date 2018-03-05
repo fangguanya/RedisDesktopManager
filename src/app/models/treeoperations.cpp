@@ -1,124 +1,119 @@
 #include "treeoperations.h"
-#include <qredisclient/redisclient.h>
-#include <qredisclient/utils/compat.h>
-#include "app/models/connectionconf.h"
 
+#include <QtConcurrent>
+#include <QRegExp>
 #include <algorithm>
 #include <QSet>
 #include <QRegularExpression>
 #include <QRegularExpressionMatchIterator>
+#include <qredisclient/redisclient.h>
+#include <asyncfuture.h>
 
-TreeOperations::TreeOperations(QSharedPointer<RedisClient::Connection> connection)
-    : m_connection(connection)
+#include "app/models/connectionconf.h"
+#include "app/models/connectionsmanager.h"
+#include "connections-tree/items/namespaceitem.h"
+#include "connections-tree/keysrendering.h"
+
+
+TreeOperations::TreeOperations(QSharedPointer<RedisClient::Connection> connection, ConnectionsManager &manager)
+    : m_connection(connection),
+      m_manager(manager)
 {
 }
 
-void TreeOperations::getDatabases(std::function<void (ConnectionsTree::Operations::DatabaseList)> callback)
+void TreeOperations::getDatabases(std::function<void (RedisClient::DatabaseList)> callback)
 {
-    if (!m_connection->isConnected()) {
+    bool connected = m_connection->isConnected();
 
-        bool result;
-
+    if (!connected) {
         try {
-            result = m_connection->connect();
+            connected = m_connection->connect(true);
         } catch (const RedisClient::Connection::Exception& e) {
-            throw ConnectionsTree::Operations::Exception("Cannot connect to host: " + QString(e.what()));
+            throw ConnectionsTree::Operations::Exception(QObject::tr("Connection error: ") + QString(e.what()));
+        }
+    }
+
+    if (!connected) {
+        throw ConnectionsTree::Operations::Exception(
+                    QObject::tr("Cannot connect to server '%1'. Check log for details.").arg(m_connection->getConfig().name()));
+    }    
+
+    RedisClient::DatabaseList availableDatabeses = m_connection->getKeyspaceInfo();
+
+    if (m_connection->mode() != RedisClient::Connection::Mode::Cluster) {
+        //detect all databases
+        RedisClient::Response scanningResp;
+        int dbIndex = (availableDatabeses.size() == 0)? 0 : availableDatabeses.lastKey() + 1;
+
+        while (true) {
+            try {
+                scanningResp = m_connection->commandSync("select", QString::number(dbIndex));
+            } catch (const RedisClient::Connection::Exception& e) {
+                throw ConnectionsTree::Operations::Exception(QObject::tr("Connection error: ") + QString(e.what()));
+            }
+
+            if (!scanningResp.isOkMessage())
+                break;
+
+            availableDatabeses.insert(dbIndex, 0);
+            ++dbIndex;
         }
 
-        if (!result)
-            throw ConnectionsTree::Operations::Exception("Cannot connect to host");
-    }
-
-    using namespace RedisClient;
-
-    //  Get keys count
-    Response result;
-    try {
-        result = m_connection->commandSync("info");
-    } catch (const RedisClient::Connection::Exception& e) {
-        throw ConnectionsTree::Operations::Exception("Connection error: " + QString(e.what()));
-    }
-
-    DatabaseList availableDatabeses;
-    QSet<int> loadedDatabeses;
-
-    if (result.isErrorMessage()) {
-        return callback(availableDatabeses);
-    }
-
-    // Parse keyspace info
-    QString keyspaceInfo = result.getValue().toString();
-    QRegularExpression getDbAndKeysCount("^db(\\d+):keys=(\\d+)");
-    getDbAndKeysCount.setPatternOptions(QRegularExpression::MultilineOption);
-    QRegularExpressionMatchIterator iter = getDbAndKeysCount.globalMatch(keyspaceInfo);
-    while (iter.hasNext()) {
-        QRegularExpressionMatch match = iter.next();
-        int dbIndex = match.captured(1).toInt();
-        availableDatabeses.push_back({dbIndex, match.captured(2).toInt()});
-        loadedDatabeses.insert(dbIndex);
-    }
-
-    int dbCount = (loadedDatabeses.isEmpty())? 0 : *std::max_element(loadedDatabeses.begin(),
-                                                                     loadedDatabeses.end());
-    //detect more db if needed
-    if (dbCount == 0) {
-        Response scanningResp;
-        do {
-            try {
-                scanningResp = m_connection->commandSync("select", QString::number(dbCount));
-            } catch (const RedisClient::Connection::Exception& e) {
-                throw ConnectionsTree::Operations::Exception("Connection error: " + QString(e.what()));
-            }
-        } while (scanningResp.isOkMessage() && ++dbCount);
-    }
-
-    // build db list
-    for (int dbIndex = 0; dbIndex < dbCount; ++dbIndex)
-    {
-        if (loadedDatabeses.contains(dbIndex))
-            continue;
-        availableDatabeses.push_back({dbIndex, 0});
-    }
-
-    std::sort(availableDatabeses.begin(), availableDatabeses.end(),
-              [](QPair<int, int> l, QPair<int, int> r) {
-        return l.first < r.first;
-    });
+    }    
 
     return callback(availableDatabeses);
 }
 
-void TreeOperations::getDatabaseKeys(uint dbIndex, QString filter, std::function<void (const RawKeysList &, const QString &)> callback)
+void TreeOperations::loadNamespaceItems(QSharedPointer<ConnectionsTree::AbstractNamespaceItem> parent,
+                        const QString& filter,
+                        std::function<void(const QString& err)> callback)
 {
     QString keyPattern = filter.isEmpty() ? static_cast<ServerConfig>(m_connection->getConfig()).keysPattern() : filter;
 
-    if (m_connection->getServerVersion() >= 2.8) {
-        QList<QByteArray> rawCmd {
-            "scan", "0", "MATCH", keyPattern.toUtf8(), "COUNT", "10000"
-        };
-        QSharedPointer<RedisClient::ScanCommand> keyCmd(new RedisClient::ScanCommand(rawCmd, dbIndex));
-
-        try {
-            m_connection->retrieveCollection(keyCmd, [this, callback](QVariant r, QString err)
-            {                
-                if (!err.isEmpty())
-                    callback(RawKeysList(), QString("Cannot load keys: %1").arg(err));
-
-                callback(convertQVariantList(r.toList()), QString());
-            });
-        } catch (const RedisClient::Connection::Exception& error) {            
-            callback(RawKeysList(), QString("Cannot load keys: %1").arg(error.what()));
+    auto renderingCallback = [this, callback, filter, parent]
+            (const RedisClient::Connection::RawKeysList& keylist,
+             const QString& err)
+    {
+        if (!err.isEmpty()) {
+            return callback(err);
         }
-    } else {
-        try {
-            m_connection->command({"KEYS", keyPattern.toUtf8()}, this,
-                                  [this, callback](RedisClient::Response r, QString)
-            {
-                callback(convertQVariantList(r.getValue().toList()), QString());
-            }, dbIndex);
-        } catch (const RedisClient::Connection::Exception& error) {
-            callback(RawKeysList(), QString("Cannot load keys: %1").arg(error.what()));
+
+        auto settings = ConnectionsTree::KeysTreeRenderer::RenderingSettigns{QRegExp(filter), getNamespaceSeparator(), parent->getDbIndex()};
+
+        AsyncFuture::observe(
+            QtConcurrent::run(&ConnectionsTree::KeysTreeRenderer::renderKeys, sharedFromThis(), keylist,
+                               parent, settings, m_manager.m_expanded)
+        ).subscribe([callback]() {
+            callback(QString());
+        });
+    };
+
+    auto thinRenderingCallback = [this, callback, parent]
+            (const RedisClient::Connection::NamespaceItems& items, const QString& err) {
+        if (!err.isEmpty()) {
+            return callback(err);
         }
+
+        ConnectionsTree::KeysTreeRenderer::renderNamespaceItems(
+                    sharedFromThis(), items, parent, m_manager.m_expanded);
+
+        callback(QString());
+    };
+
+    try {        
+        if (m_connection->mode() == RedisClient::Connection::Mode::Cluster) {
+            m_connection->getClusterKeys(renderingCallback, keyPattern);
+        } else {
+            if (static_cast<ServerConfig>(m_connection->getConfig()).luaKeysLoading()) {
+                m_connection->getNamespaceItems(thinRenderingCallback, getNamespaceSeparator(),
+                                                filter, parent->getDbIndex());
+            } else {
+                m_connection->getDatabaseKeys(renderingCallback, keyPattern, parent->getDbIndex());
+            }
+        }        
+
+    } catch (const RedisClient::Connection::Exception& error) {
+        callback(QString(QObject::tr("Cannot load keys: %1")).arg(error.what()));
     }
 }
 
@@ -134,23 +129,93 @@ QString TreeOperations::getNamespaceSeparator()
 
 void TreeOperations::openKeyTab(ConnectionsTree::KeyItem& key, bool openInNewTab)
 {
-    emit openValueTab(m_connection, key, openInNewTab);
+    emit m_manager.openValueTab(m_connection, key, openInNewTab);
 }
 
 void TreeOperations::openConsoleTab()
 {    
-    emit openConsole(m_connection);
+    emit m_manager.openConsole(m_connection);
 }
 
-// TODO: add callback paramter to allow defining additional logic in db item
-// TODO: fix issue #3328
 void TreeOperations::openNewKeyDialog(int dbIndex, std::function<void()> callback,
                                       QString keyPrefix)
 {
-    emit newKeyDialog(m_connection, callback, dbIndex, keyPrefix);
+    emit m_manager.newKeyDialog(m_connection, callback, dbIndex, keyPrefix);
+}
+
+void TreeOperations::openServerStats()
+{
+    emit m_manager.openServerStats(m_connection);
 }
 
 void TreeOperations::notifyDbWasUnloaded(int dbIndex)
 {
-    emit closeDbKeys(m_connection, dbIndex);
+    emit m_manager.closeDbKeys(m_connection, dbIndex);
+}
+
+void TreeOperations::deleteDbKey(ConnectionsTree::KeyItem& key, std::function<void(const QString&)> callback)
+{
+    RedisClient::Command::Callback cmdCallback = [this, &key, &callback](const RedisClient::Response&, const QString& error)
+    {
+        if (!error.isEmpty()) {
+          callback(QString(QObject::tr("Cannot remove key: %1")).arg(error));
+          return;
+        }
+
+        key.setRemoved();
+        QRegExp filter(key.getFullPath(), Qt::CaseSensitive, QRegExp::Wildcard);
+        emit m_manager.closeDbKeys(m_connection, key.getDbIndex(), filter);        
+    };
+
+    try {
+        m_connection->command({"DEL", key.getFullPath()}, this, cmdCallback, key.getDbIndex());
+    } catch (const RedisClient::Connection::Exception& e) {
+        throw ConnectionsTree::Operations::Exception(QObject::tr("Delete key error: ") + QString(e.what()));
+    }
+}
+
+void TreeOperations::deleteDbNamespace(ConnectionsTree::NamespaceItem &ns)
+{
+    QString pattern = QString("%1%2*")
+            .arg(QString::fromUtf8(ns.getFullPath()))
+            .arg(static_cast<ServerConfig>(m_connection->getConfig()).namespaceSeparator());
+    QRegExp filter(pattern, Qt::CaseSensitive, QRegExp::Wildcard);
+
+    int dbIndex = ns.getDbIndex();
+
+    emit m_manager.requestBulkOperation(m_connection, dbIndex,
+                                        BulkOperations::Manager::Operation::DELETE_KEYS,
+                                        filter, [this, dbIndex, filter, &ns]() {
+        ns.setRemoved();
+        emit m_manager.closeDbKeys(m_connection, dbIndex, filter);
+    });
+}
+
+void TreeOperations::flushDb(int dbIndex, std::function<void(const QString&)> callback)
+{
+    RedisClient::Command::Callback cmdCallback = [this, callback](const RedisClient::Response&, const QString& error)
+    {
+        if (!error.isEmpty()) {
+          callback(QString(QObject::tr("Cannot remove key: %1")).arg(error));
+          return;
+        }
+        callback(QString());
+    };
+
+    try {
+        m_connection->command({"FLUSHDB"}, this, cmdCallback, dbIndex);
+    } catch (const RedisClient::Connection::Exception& e) {
+        throw ConnectionsTree::Operations::Exception(QObject::tr("FlushDB error: ") + QString(e.what()));
+    }
+}
+
+QString TreeOperations::mode()
+{
+    if (m_connection->mode() == RedisClient::Connection::Mode::Cluster) {
+        return QString("cluster");
+    } else if (m_connection->mode() == RedisClient::Connection::Mode::Sentinel) {
+        return QString("sentinel");
+    } else {
+        return QString("standalone");
+    }
 }

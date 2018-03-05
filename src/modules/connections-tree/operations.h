@@ -1,9 +1,10 @@
 #pragma once
 #include <QString>
-#include <QHash>
+#include <QMap>
 #include <QSharedPointer>
 #include <QStringList>
 #include <functional>
+#include <qredisclient/connection.h>
 #include "exception.h"
 
 namespace Console {
@@ -13,6 +14,8 @@ namespace Console {
 namespace ConnectionsTree {
 
     class KeyItem;
+    class NamespaceItem;
+    class AbstractNamespaceItem;
 
     class Operations
     {
@@ -22,16 +25,18 @@ namespace ConnectionsTree {
         /**
          * List of databases with keys counters
          * @emit databesesLoaded
-         **/
-        typedef QVector<QPair<int, int>> DatabaseList;
-        virtual void getDatabases(std::function<void(DatabaseList)>) = 0;
+         **/        
+        virtual void getDatabases(std::function<void(QMap<int, int>)>) = 0;
 
         /**
-         * @brief getDatabaseKeys
+         * @brief loadNamespaceItems
          * @param dbIndex
-         */
-        typedef QList<QByteArray> RawKeysList;
-        virtual void getDatabaseKeys(uint dbIndex, QString filter, std::function<void(const RawKeysList&, const QString&)>) = 0;
+         * @param filter
+         * @param callback
+         */        
+        virtual void loadNamespaceItems(QSharedPointer<AbstractNamespaceItem> parent,
+                                        const QString& filter,
+                                        std::function<void(const QString& err)> callback) = 0;
 
         /**
          * Cancel all operations & close connection
@@ -52,7 +57,17 @@ namespace ConnectionsTree {
         virtual void openNewKeyDialog(int dbIndex, std::function<void()> callback,
                                       QString keyPrefix = QString()) = 0;
 
+        virtual void openServerStats() = 0;
+
         virtual void notifyDbWasUnloaded(int dbIndex) = 0;
+
+        virtual void deleteDbKey(ConnectionsTree::KeyItem& key, std::function<void(const QString&)> callback) = 0;
+
+        virtual void deleteDbNamespace(ConnectionsTree::NamespaceItem& ns) = 0;
+
+        virtual void flushDb(int dbIndex, std::function<void(const QString&)> callback) = 0;
+
+        virtual QString mode() = 0;
 
         virtual ~Operations() {}
 

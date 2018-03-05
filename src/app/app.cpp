@@ -4,14 +4,15 @@
 #include <QUrl>
 #include <QSysInfo>
 #include <QQmlContext>
+#include <QSettings>
 #include <QMessageBox>
-#include <QtWebEngine/QtWebEngine>
+#include <QQuickWindow>
 #include <easylogging++.h>
-#include <googlemp.h>
 #include <qredisclient/redisclient.h>
 
 #include "logger.h"
 #include "qmlutils.h"
+#include "common/tabviewmodel.h"
 #include "models/connectionconf.h"
 #include "models/configmanager.h"
 #include "models/connectionsmanager.h"
@@ -19,70 +20,92 @@
 #include "modules/updater/updater.h"
 #include "modules/value-editor/valueviewmodel.h"
 #include "modules/value-editor/viewmodel.h"
-#include "modules/console/consoleviewmodel.h"
+#include "modules/value-editor/sortfilterproxymodel.h"
+#include "modules/value-editor/formattersmanager.h"
+#include "modules/console/consolemodel.h"
+#include "modules/server-stats/serverstatsmodel.h"
+#include "modules/bulk-operations/bulkoperationsmanager.h"
+
 
 INITIALIZE_EASYLOGGINGPP
 
-static QObject *analytics_singletontype_provider(QQmlEngine *engine, QJSEngine *scriptEngine)
-{
-    Q_UNUSED(engine)
-    Q_UNUSED(scriptEngine)
-
-    GoogleMP *gmp = GoogleMP::instance();
-    return gmp;
-}
 
 Application::Application(int &argc, char **argv)
     : QApplication(argc, argv),
+      m_engine(this),
       m_qmlUtils(QSharedPointer<QmlUtils>(new QmlUtils())),      
       m_logger(nullptr)
 {
     // Init components required for models and qml
     initLog();
     initAppInfo();
-    initAppFonts();
-    initAppAnalytics();
+    processCmdArgs();
+    initAppFonts();    
     initRedisClient();
-    initUpdater();
-    QtWebEngine::initialize();
+    initUpdater();    
+    installTranslator();
 }
 
 void Application::initModels()
 {
     initConnectionsManager();
 
-    m_consoleModel = QSharedPointer<Console::ViewModel>(new Console::ViewModel());
+    m_consoleModel = QSharedPointer<TabViewModel>(new TabViewModel(getTabModelFactory<Console::Model>()));
 
     connect(m_connections.data(), &ConnectionsManager::openConsole,
-            m_consoleModel.data(), &Console::ViewModel::openConsole);
+            m_consoleModel.data(), &TabViewModel::openTab);
+
+    m_serverStatsModel = QSharedPointer<TabViewModel>(new TabViewModel(getTabModelFactory<ServerStats::Model>()));
+
+    connect(m_connections.data(), &ConnectionsManager::openServerStats,
+            m_serverStatsModel.data(), &TabViewModel::openTab);
+
+    m_formattersManager = QSharedPointer<ValueEditor::FormattersManager>(new ValueEditor::FormattersManager());
+    m_formattersManager->loadFormatters();
 }
 
 void Application::initAppInfo()
 {
-    setApplicationName("Redis Desktop Manager");
+    setApplicationName("RedisDesktopManager");
     setApplicationVersion(QString(RDM_VERSION));
     setOrganizationDomain("redisdesktop.com");
     setOrganizationName("redisdesktop");
+    setWindowIcon(QIcon(":/images/logo.png"));
 }
 
 void Application::initAppFonts()
 {
-    QFontDatabase::addApplicationFont("://fonts/OpenSans-Regular.ttf");
-    QFont defaultFont("OpenSans", 10);
+    QSettings settings;
+#ifdef Q_OS_MAC    
+    QString defaultFontName("Helvetica Neue");
+    int defaultFontSize = 12;
+#else 
+    QString defaultFontName("Open Sans");
+    int defaultFontSize = 11;
+#endif    
+    
+    QString appFont = settings.value("app/appFont", defaultFontName).toString();
+    int appFontSize = settings.value("app/appFontSize", defaultFontSize).toInt();
+
+#ifdef Q_OS_LINUX
+    if (appFont == "Open Sans") {
+        int result = QFontDatabase::addApplicationFont("://fonts/OpenSans.ttc");
+
+        if (result == -1) {
+            appFont = "Ubuntu";
+        }
+    }
+#endif
+
+    qDebug() << "App font:" << appFont << appFontSize;
+    QFont defaultFont(appFont, appFontSize);
     QApplication::setFont(defaultFont);
 }
 
-void Application::initAppAnalytics()
-{
-    GoogleMP::startSession(QDateTime::currentMSecsSinceEpoch());
-    GoogleMP::instance()->reportEvent("rdm:cpp", "app start", "");
-}
-
 void Application::registerQmlTypes()
-{
-    qmlRegisterType<ValueEditor::ValueViewModel>("rdm.models", 1, 0, "ValueViewModel");   
-    qmlRegisterSingletonType<GoogleMP>("MeasurementProtocol", 1, 0, "Analytics", analytics_singletontype_provider);
-    qRegisterMetaType<ServerConfig>();
+{    
+    qmlRegisterType<SortFilterProxyModel>("rdm.models", 1, 0, "SortFilterProxyModel");        
+    qRegisterMetaType<ServerConfig>();    
 }
 
 void Application::registerQmlRootObjects()
@@ -92,15 +115,36 @@ void Application::registerQmlRootObjects()
     m_engine.rootContext()->setContextProperty("connectionsManager", m_connections.data());
     m_engine.rootContext()->setContextProperty("viewModel", m_keyValues.data()); // TODO: Remove legacy name usage in qml    
     m_engine.rootContext()->setContextProperty("valuesModel", m_keyValues.data());
+    m_engine.rootContext()->setContextProperty("formattersManager", m_formattersManager.data());
     m_engine.rootContext()->setContextProperty("consoleModel", m_consoleModel.data());
+    m_engine.rootContext()->setContextProperty("serverStatsModel", m_serverStatsModel.data());
     m_engine.rootContext()->setContextProperty("appLogger", m_logger);
+    m_engine.rootContext()->setContextProperty("bulkOperations", m_bulkOperations.data());
 }
 
 void Application::initQml()
-{
+{             
+    if (m_renderingBackend == "auto") {
+        #ifdef Q_OS_WIN        
+        // Use software renderer on Windows by default
+        QQuickWindow::setSceneGraphBackend(QSGRendererInterface::Software);
+        #endif
+    } else {
+        QQuickWindow::setSceneGraphBackend(m_renderingBackend);
+    }
+
     registerQmlTypes();
     registerQmlRootObjects();
-    m_engine.load(QUrl(QStringLiteral("qrc:///app.qml")));
+
+    try {
+        m_engine.load(QUrl(QStringLiteral("qrc:///app.qml")));
+    } catch (...) {
+        qDebug() << "Failed to load app window. Retrying with software renderer...";
+        QQuickWindow::setSceneGraphBackend(QSGRendererInterface::Software);
+        m_engine.load(QUrl(QStringLiteral("qrc:///app.qml")));
+    }
+
+    qDebug() << "Rendering backend:" << QQuickWindow::sceneGraphBackend();
 }
 
 void Application::initLog()
@@ -125,7 +169,7 @@ void Application::initLog()
 void Application::initConnectionsManager()
 {
     //connection manager
-    ConfigManager confManager;
+    ConfigManager confManager(m_settingsDir);
     if (confManager.migrateOldConfig("connections.xml", "connections.json")) {
         LOG(INFO) << "Migrate connections.xml to connections.json";
     }
@@ -134,10 +178,9 @@ void Application::initConnectionsManager()
 
     if (config.isNull()) {
         QMessageBox::critical(nullptr,
-            "Settings directory is not writable",
-            QString("Program can't save connections file to settings dir."
-                    "Please change permissions or restart this program "
-                    " with administrative privileges")
+            QObject::tr("Settings directory is not writable"),
+            QString(QObject::tr("RDM can't save connections file to settings directory. "
+                    "Please change file permissions or restart RDM as administrator."))
             );
 
         throw std::runtime_error("invalid connections config");
@@ -151,9 +194,18 @@ void Application::initConnectionsManager()
                     )
                 );
 
-    m_connections = QSharedPointer<ConnectionsManager>(
-                    new ConnectionsManager(config, m_keyValues)
-                );
+    m_connections = QSharedPointer<ConnectionsManager>(new ConnectionsManager(config));
+
+    m_bulkOperations = QSharedPointer<BulkOperations::Manager>(new BulkOperations::Manager(m_connections));
+
+    QObject::connect(m_connections.data(), &ConnectionsManager::openValueTab,
+                     m_keyValues.data(), &ValueEditor::ViewModel::openTab);
+    QObject::connect(m_connections.data(), &ConnectionsManager::newKeyDialog,
+                     m_keyValues.data(), &ValueEditor::ViewModel::openNewKeyDialog);
+    QObject::connect(m_connections.data(), &ConnectionsManager::closeDbKeys,
+                     m_keyValues.data(), &ValueEditor::ViewModel::closeDbKeys);
+    QObject::connect(m_connections.data(), &ConnectionsManager::requestBulkOperation,
+                     m_bulkOperations.data(), &BulkOperations::Manager::requestBulkOperation);
 }
 
 void Application::initUpdater()
@@ -162,8 +214,64 @@ void Application::initUpdater()
     connect(m_updater.data(), SIGNAL(updateUrlRetrived(QString &)), this, SLOT(OnNewUpdateAvailable(QString &)));
 }
 
+void Application::installTranslator()
+{
+    QSettings settings;
+    QString preferredLocale = settings.value("app/locale", "system").toString();
+
+    QString locale;
+
+    if (preferredLocale == "system") {
+        settings.setValue("app/locale", "system");
+        locale = QLocale::system().uiLanguages().first().replace( "-", "_" );
+
+        qDebug() << QLocale::system().uiLanguages();
+
+        if (locale.isEmpty() || locale == "C")
+            locale = "en_US";
+
+        qDebug() << "Detected locale:" << locale;
+    } else {
+        locale = preferredLocale;
+    }
+
+    QTranslator* translator = new QTranslator((QObject *)this);
+    if (translator->load( QString( ":/translations/rdm_" ) + locale ))
+    {
+        qDebug() << "Load translations file for locale:" << locale;
+        QCoreApplication::installTranslator( translator );
+    } else {
+        delete translator;
+    }
+}
+
+void Application::processCmdArgs()
+{
+    QCommandLineParser parser;    
+    QCommandLineOption settingsDir(
+            "settings-dir",
+             "(Optional) Directory where RDM looks/saves .rdm directory with connections.json file",
+             "settingsDir",
+             QDir::homePath()
+    );
+    QCommandLineOption renderingBackend(
+            "rendering-backend",
+             "(Optional) QML rendering backend [software|opengl|d3d12|'']",
+             "renderingBackend",
+             "auto"
+    );
+    parser.addHelpOption();
+    parser.addVersionOption();
+    parser.addOption(settingsDir);
+    parser.addOption(renderingBackend);
+    parser.process(*this);
+
+    m_settingsDir = parser.value(settingsDir);
+    m_renderingBackend = parser.value(renderingBackend);
+}
+
 void Application::OnNewUpdateAvailable(QString &url)
 {
     QMessageBox::information(nullptr, "New update available",
-        QString("Please download new version of Redis Desktop Manager: %1").arg(url));
+        QString(QObject::tr("Please download new version of Redis Desktop Manager: %1")).arg(url));
 }

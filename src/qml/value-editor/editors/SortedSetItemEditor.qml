@@ -10,9 +10,11 @@ AbstractEditor {
     id: root
     anchors.fill: parent
 
+    property bool active: false
+
     Text {
         Layout.fillWidth: true
-        text: "Score:"
+        text: qsTr("Score:")
     }
 
     TextField {
@@ -22,10 +24,24 @@ AbstractEditor {
         Layout.minimumHeight: 28
 
         text: ""
-        enabled: originalValue != "" || root.state !== "edit"
-        property var originalValue: ""
-        placeholderText: "Score"
+        enabled: root.active || root.state !== "edit"
+        property string valueHash: ""
+        placeholderText: qsTr("Score")
         validator: DoubleValidator { locale: "C"; notation: DoubleValidator.StandardNotation } // force point as decimal separator
+        objectName: "rdm_key_zset_score_field"
+
+        function setValue(v) {
+            valueHash = Qt.md5(v)
+            text = parseFloat(Number(v).toFixed(20))
+        }
+
+        function isEdited() {
+            return Qt.md5(text) != valueHash
+        }
+
+        function reset() {
+            text = ""
+        }
     }
 
     MultilineEditor {
@@ -33,50 +49,39 @@ AbstractEditor {
         Layout.fillWidth: true
         Layout.fillHeight: true
         value: ""
-        enabled: originalValue != "" || root.state !== "edit"
-        showFormatters: root.state != "new"
-        property var originalValue: ""
+        enabled: root.active || root.state !== "edit"
+        showFormatters: root.state == "edit"
+        objectName: "rdm_key_zset_text_field"
+    }
+
+    function initEmpty() {
+        textArea.initEmpty()
+    }
+
+    function validateValue(callback) {
+        return textArea.validate(callback);
     }
 
     function setValue(rowValue) {
-        scoreText.originalValue = rowValue['score']
-        scoreText.text = parseFloat(Number(rowValue['score']).toFixed(20))
-        textArea.originalValue = rowValue['value']
-        textArea.setValue(rowValue['value'])
+        if (!rowValue)
+            return
+
+        active = true
+        scoreText.setValue(rowValue['score'])
+        textArea.loadFormattedValue(rowValue['value'])
     }
 
-    function isValueChanged() {
-        return textArea.originalValue != textArea.getText()
-                || scoreText.originalValue != scoreText.text
-    }
-
-    function resetAndDisableEditor() {
-        textArea.originalValue = ""
-        textArea.value = ""
-        scoreText.originalValue = ""
-        scoreText.text = ""
+    function isEdited() {
+        return textArea.isEdited || scoreText.isEdited()
     }
 
     function getValue() {
-        return {"value": textArea.getText(), "score": scoreText.text}
+        return {"value": textArea.value, "score": scoreText.text}
     }    
 
-    function isValueValid() {
-        var value = getValue()
-
-        return value && value['score'] && value['value']
-                && value['score'].length > 0
-                && value['value'].length > 0
-    }
-
-    function markInvalidFields() {
-        scoreText.textColor = "black"
-        textArea.textColor = "black"
-        // Fixme
-    }
-
     function reset() {
-        textArea.value = ""
-        scoreText.text = ""
+        root.active = false
+        scoreText.reset()
+        textArea.reset()
     }
 }

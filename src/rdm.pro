@@ -4,14 +4,14 @@
 #
 #-------------------------------------------------
 
-QT += core gui network concurrent widgets quick quickwidgets webengine
+QT += core gui network concurrent widgets quick quickwidgets charts
 
 TARGET = rdm
 TEMPLATE = app
 
 # Skip version file
 !exists( $$PWD/version.h ) {    
-    DEFINES += RDM_VERSION=\\\"0.9.0-dev\\\"
+    DEFINES += RDM_VERSION=\\\"0.9.999\\\"
 }
 
 DEFINES += CORE_LIBRARY ELPP_QT_LOGGING ELPP_STL_LOGGING ELPP_DISABLE_DEFAULT_CRASH_HANDLING
@@ -28,6 +28,9 @@ SOURCES += \
     $$PWD/modules/value-editor/*.cpp \
     $$PWD/modules/crashhandler/*.cpp \
     $$PWD/modules/updater/*.cpp \
+    $$PWD/modules/bulk-operations/*.cpp \
+    $$PWD/modules/common/*.cpp \
+    $$PWD/modules/server-stats/*.cpp \
 
 HEADERS  += \
     $$PWD/app/app.h \
@@ -41,13 +44,14 @@ HEADERS  += \
     $$PWD/modules/value-editor/*.h \
     $$PWD/modules/crashhandler/*.h \
     $$PWD/modules/updater/*.h \
-    $$PWD/modules/*.h \    
+    $$PWD/modules/*.h \
+    $$PWD/modules/bulk-operations/*.h \
+    $$PWD/modules/common/*.h \
+    $$PWD/modules/server-stats/*.h \
 
 exists( $$PWD/version.h ) {
     HEADERS  += $$PWD/version.h
 }
-
-LIBS += -lz
 
 THIRDPARTYDIR = $$PWD/../3rdparty/
 
@@ -55,14 +59,18 @@ include($$THIRDPARTYDIR/3rdparty.pri)
 
 win32 {
     CONFIG += c++11
-    LIBS += -lws2_32 -lkernel32 -luser32 -lshell32 -luuid -lole32 -ladvapi32
     RC_FILE += $$PWD/resources/rdm.rc
+
+    win32-msvc* {
+        QMAKE_LFLAGS += /LARGEADDRESSAWARE
+    }
 
     release: DESTDIR = ./../bin/windows/release
     debug:   DESTDIR = ./../bin/windows/debug
 }
 
 unix:macx { # OSX
+    QT += svg
     CONFIG += c++11
 
     debug: CONFIG-=app_bundle
@@ -85,7 +93,9 @@ unix:!macx { # ubuntu & debian
     CONFIG += static release
     CONFIG -= debug    
 
-    QMAKE_LFLAGS += -static-libgcc -static-libstdc++
+    QTPLUGIN += qsvg qsvgicon
+
+    QMAKE_CXXFLAGS += -Wno-sign-compare    
 
     release: DESTDIR = ./../bin/linux/release
     debug:   DESTDIR = ./../bin/linux/debug
@@ -117,10 +127,30 @@ RESOURCES += \
     $$PWD/resources/images.qrc \
     $$PWD/resources/fonts.qrc \    
     $$PWD/qml/qml.qrc \
-    $$PWD/modules/code-editor/ace.qrc \
+    $$PWD/resources/tr.qrc \
 
 OTHER_FILES += \
     qt.conf \
     Info.plist \
     qml\*.qml \
-    $$PWD/modules/code-editor/ace.html \
+
+
+lupdate_only{
+    SOURCES += \
+        $$PWD/qml/*.qml \
+        $$PWD/qml/value-editor/*.qml \
+        $$PWD/qml/settings/*.qml \
+        $$PWD/qml/server-info/*.qml \
+        $$PWD/qml/console/*.qml \
+        $$PWD/qml/connections-tree/*.qml \
+        $$PWD/qml/common/*.qml \
+        $$PWD/qml/bulk-operations/*.qml \
+}
+
+
+TRANSLATIONS = \
+    $$PWD/resources/translations/rdm.ts \
+    $$PWD/resources/translations/rdm_zh_CN.ts \
+    $$PWD/resources/translations/rdm_zh_TW.ts
+
+CODECFORSRC = UTF-8

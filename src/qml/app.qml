@@ -11,7 +11,8 @@ import "./common"
 import "./value-editor"
 import "./connections-tree"
 import "./console"
-import "./code-editor"
+import "./server-info"
+import "./bulk-operations"
 
 ApplicationWindow {
     id: approot
@@ -19,7 +20,7 @@ ApplicationWindow {
     objectName: "rdm_qml_root"
     title: "Redis Desktop Manager " + Qt.application.version
     width: 1100
-    height: 700
+    height: 800
 
     property double wRatio : (width * 1.0) / (Screen.width * 1.0)
     property double hRatio : (height * 1.0) / (Screen.height * 1.0)
@@ -30,7 +31,7 @@ ApplicationWindow {
         if (hRatio > 1 || wRatio > 1) {
             console.log("Ratio > 1.0. Resize main window.")
             width = Screen.width * 0.9
-            height = Screen.heigh * 0.8
+            height = Screen.height * 0.8
         }
     }
 
@@ -46,6 +47,13 @@ ApplicationWindow {
         id: sysPalette
     }
 
+    FontLoader {
+        id: monospacedFont
+        Component.onCompleted: {
+            source = "qrc:/fonts/Inconsolata-Regular.ttf"
+        }
+    }
+
     QuickStartDialog {
         id: quickStartDialog
         objectName: "rdm_qml_quick_start_dialog"
@@ -58,12 +66,16 @@ ApplicationWindow {
     ConnectionSettignsDialog {
         id: connectionSettingsDialog
 
-        onTestConnection: {
+        objectName: "rdm_connection_settings_dialog"
+
+        onTestConnection: {                       
             if (connectionsManager.testConnectionSettings(settings)) {
-                notification.showMsg("Successful connection to redis-server")
+                hideLoader()
+                showMsg(qsTr("Successful connection to redis-server"))
             } else {
-                notification.showError("Can't connect to redis-server")
-            }
+                hideLoader()
+                showError(qsTr("Can't connect to redis-server"))
+            }            
         }
 
         onSaveConnection: connectionsManager.updateConnection(settings)
@@ -90,6 +102,19 @@ ApplicationWindow {
         }
     }
 
+    BulkOperationsDialog {
+        id: bulkOperationDialog
+    }
+
+    Connections {
+        target: bulkOperations
+
+        onOpenDialog: {
+            bulkOperationDialog.operationName = operationName
+            bulkOperationDialog.open()
+        }
+    }
+
     Connections {
         target: connectionsManager
 
@@ -98,7 +123,7 @@ ApplicationWindow {
             connectionSettingsDialog.open()
         }
 
-        onError: {
+        onError: {            
             notification.showError(err)
         }
 
@@ -118,6 +143,7 @@ ApplicationWindow {
             id: connectionsTree
             Layout.fillHeight: true
             Layout.minimumWidth: 350
+            Layout.minimumHeight: 500
         }
 
         BetterSplitView {
@@ -134,18 +160,54 @@ ApplicationWindow {
                 Layout.minimumHeight: 30
 
                 onCurrentIndexChanged: {
-                    var index = currentIndex
-                    if (tabs.getTab(0).not_mapped) index -= 1
-                    viewModel.setCurrentTab(index)
+
+                    if (tabs.getTab(currentIndex).tabType) {
+                        if (tabs.getTab(currentIndex).tabType == "value") {
+
+                            var realIndex = currentIndex - serverStatsModel.tabsCount();
+
+                            if (welcomeTab) {
+                                realIndex -= 1
+                            }
+
+                            viewModel.setCurrentTab(realIndex);
+                        } else if (tabs.getTab(currentIndex).tabType == "server_info") {
+                            var realIndex = currentIndex;
+
+                            if (welcomeTab) {
+                                realIndex -= 1
+                            }
+
+                            serverStatsModel.setCurrentTab(index);
+                        }
+                    }
                 }
 
                 WelcomeTab {
+                    id: welcomeTab
                     clip: true
                     objectName: "rdm_qml_welcome_tab"
 
                     property bool not_mapped: true
 
                     onClose: tabs.removeTab(index)
+
+                    function closeIfOpened() {
+                        var welcomeTab = tabs.getTab(0)
+
+                        if (welcomeTab && welcomeTab.not_mapped)
+                            tabs.removeTab(0)
+                    }
+                }
+
+                ServerInfoTabs {
+                    model: serverStatsModel
+                }
+
+                Connections {
+                    target: serverStatsModel
+
+                    onRowsInserted: if (welcomeTab) welcomeTab.closeIfOpened()
                 }
 
                 ValueTabs {
@@ -162,16 +224,13 @@ ApplicationWindow {
                     target: valuesModel
                     onKeyError: {
                         if (index != -1)
-                            tabs.currentIndex = index + 1
+                            tabs.currentIndex = index
 
                         notification.showError(error)
                     }
 
-                    onCloseWelcomeTab: {
-                        var welcomeTab = tabs.getTab(0)
-
-                        if (welcomeTab && welcomeTab.not_mapped)
-                            tabs.removeTab(0)
+                    onRowsInserted: {
+                        if (welcomeTab) welcomeTab.closeIfOpened()
                     }
 
                     onNewKeyDialog: addNewKeyDialog.open()
@@ -206,7 +265,7 @@ ApplicationWindow {
                     BaseConsole {
                         id: logTab
                         readOnly: true
-                        textColor: "darkgrey"
+                        textColor: "#6D6D6E"
 
                         Connections {
                             target: appLogger

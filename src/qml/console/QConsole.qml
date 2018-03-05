@@ -13,8 +13,8 @@ Rectangle {
     property alias busy: textArea.readOnly
 
     property string initText:
-          "<span style='color: white; font-size: 14px;'>RDM Redis Console</span> | <span style='color: orange'>Unsupported commands: DUMP, RESTORE, AUTH </span><br/>" +
-          "Connecting ..."
+          "<span style='color: white; font-size: 13pt;'>RDM Redis Console</span><br/>" +
+          qsTr("Connecting...")
 
 
     function setPrompt(txt, display) {
@@ -38,9 +38,9 @@ Rectangle {
     function addOutput(text, type) {
 
         if (type == "error") {
-            textArea.append("<span style='color: red'>" + text + '</span>')
+            textArea.append("<span style='color: red'>" + qmlUtils.escapeHtmlEntities(text) + '</span>')
         } else {
-            textArea.append("<span style='color: white'>" + text + '</span>')
+            textArea.append("<pre style='color: white'>" + qmlUtils.escapeHtmlEntities(text) + '</pre>')
         }
 
         if (type == "complete" || type == "error") {

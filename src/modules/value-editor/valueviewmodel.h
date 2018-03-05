@@ -3,7 +3,6 @@
 #include <QSharedPointer>
 #include <QVariantMap>
 #include "keymodel.h"
-#include "compression.h"
 
 namespace ValueEditor {
 
@@ -12,14 +11,14 @@ class ValueViewModel : public QAbstractListModel
     Q_OBJECT
 
 public:
-    ValueViewModel(QSharedPointer<ValueEditor::Model> model = QSharedPointer<ValueEditor::Model>());
+    ValueViewModel(Model &model);
+    ~ValueViewModel() {}
 
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
     QVariant data(const QModelIndex &index, int role) const;
     QHash<int, QByteArray> roleNames() const;
 
 public:
-
     // single row operations
     Q_INVOKABLE bool isRowLoaded(int i);
     Q_INVOKABLE void addRow(const QVariantMap& row);
@@ -28,22 +27,21 @@ public:
     Q_INVOKABLE QVariantMap getRow(int i);
     
     // multi row operations
-    Q_INVOKABLE void loadRows(int start, int count);
+    Q_INVOKABLE void loadRows(int start, int limit);
     Q_INVOKABLE bool isMultiRow();
     Q_INVOKABLE void reload();
     Q_INVOKABLE int totalRowCount();
     Q_INVOKABLE int pageSize();
 
-    // general operations
-    Q_INVOKABLE bool isPartialLoadingSupported();
-    Q_INVOKABLE QVariantList getColumnNames();
+    // general operations    
+    Q_INVOKABLE QVariantList getColumnNames();    
 
 signals:
     void rowsLoaded(int start, int count);
     void error(QString error);
 
 private:
-    QSharedPointer<ValueEditor::Model> m_model;
+    ValueEditor::Model& m_model;
 
 protected:
     bool isIndexValid(const QModelIndex &index) const;

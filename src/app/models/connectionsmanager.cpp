@@ -5,16 +5,16 @@
 #include <QAbstractItemModel>
 #include <easylogging++.h>
 
+#include "modules/bulk-operations/bulkoperationsmanager.h"
 #include "modules/connections-tree/items/serveritem.h"
 #include "modules/value-editor/viewmodel.h"
 #include "connectionsmanager.h"
 #include "configmanager.h"
 
-ConnectionsManager::ConnectionsManager(const QString& configPath,
-                                       QSharedPointer<ValueEditor::ViewModel> values)
+
+ConnectionsManager::ConnectionsManager(const QString& configPath)
     : ConnectionsTree::Model(),
-      m_configPath(configPath),
-      m_valueTabs(values)
+      m_configPath(configPath)
 {
     if (!configPath.isEmpty() && QFile::exists(configPath)) {
         loadConnectionsConfigFromFile(configPath);
@@ -35,7 +35,7 @@ void ConnectionsManager::addNewConnection(const ServerConfig &config, bool saveT
     m_connections.push_back(connection);
 
     //set loggers
-    registerLogger(connection);
+    registerLogger(*connection.data());
 
     //add connection to connection tree
     auto treeModel = createTreeModelForConnection(connection);
@@ -47,7 +47,7 @@ void ConnectionsManager::addNewConnection(const ServerConfig &config, bool saveT
 void ConnectionsManager::updateConnection(const ServerConfig &config)
 {
     if (!config.getOwner())
-        return;
+        return addNewConnection(config);
 
     QSharedPointer<RedisClient::Connection> connection = config.getOwner().toStrongRef();
     connection->setConnectionConfig(config);
@@ -134,6 +134,7 @@ bool ConnectionsManager::saveConnectionsConfigToFile(const QString& pathToFile)
 bool ConnectionsManager::testConnectionSettings(const ServerConfig &config)
 {
     RedisClient::Connection testConnection(config);
+    registerLogger(testConnection);
 
     try {
         return testConnection.connect();
@@ -152,30 +153,37 @@ int ConnectionsManager::size()
     return m_connections.length();
 }
 
-QSharedPointer<TreeOperations> ConnectionsManager::createTreeModelForConnection(QSharedPointer<RedisClient::Connection> connection)
+QSharedPointer<RedisClient::Connection> ConnectionsManager::getByIndex(int index)
 {
-    QSharedPointer<TreeOperations> treeModel(new TreeOperations(connection));
+    return m_connections[index];
+}
 
-    QObject::connect(treeModel.data(), &TreeOperations::openValueTab,
-                     m_valueTabs.data(), &ValueEditor::ViewModel::openTab);
-    QObject::connect(treeModel.data(), &TreeOperations::newKeyDialog,
-                     m_valueTabs.data(), &ValueEditor::ViewModel::openNewKeyDialog);
-    QObject::connect(treeModel.data(), &TreeOperations::closeDbKeys,
-                     m_valueTabs.data(), &ValueEditor::ViewModel::closeDbKeys);
-    QObject::connect(treeModel.data(), &TreeOperations::openConsole,
-                     this, &ConnectionsManager::openConsole);
+QStringList ConnectionsManager::getConnections()
+{
+    QStringList result;
 
+    for (QSharedPointer<RedisClient::Connection> c : m_connections) {
+        result.append(c->getConfig().name());
+    }
+
+    return result;
+}
+
+QSharedPointer<TreeOperations> ConnectionsManager::createTreeModelForConnection(
+        QSharedPointer<RedisClient::Connection> connection)
+{
+    QSharedPointer<TreeOperations> treeModel(new TreeOperations(connection, *this));
     return treeModel;
 }
 
-void ConnectionsManager::registerLogger(QSharedPointer<RedisClient::Connection> connection)
+void ConnectionsManager::registerLogger(const RedisClient::Connection& connection)
 {
-    QObject::connect(connection.data(), &RedisClient::Connection::log, this, [this](const QString& info){
+    QObject::connect(&connection, &RedisClient::Connection::log, this, [this](const QString& info){
         QString msg = QString("Connection: %1").arg(info);
         LOG(INFO) << msg.toStdString();
     });
 
-    QObject::connect(connection.data(), &RedisClient::Connection::error, this, [this](const QString& error){
+    QObject::connect(&connection, &RedisClient::Connection::error, this, [this](const QString& error){
         QString msg = QString("Connection: %1").arg(error);
         LOG(ERROR) << msg.toStdString();
     });
@@ -189,7 +197,7 @@ void ConnectionsManager::createServerItemForConnection(QSharedPointer<RedisClien
     auto serverItem = QSharedPointer<ServerItem>(
                 new ServerItem(name,
                                treeModel.dynamicCast<ConnectionsTree::Operations>(),
-                               static_cast<ConnectionsTree::Model>(this)));
+                               *static_cast<ConnectionsTree::Model*>(this)));
 
     QObject::connect(serverItem.data(), &ConnectionsTree::ServerItem::editActionRequested,
                      this, [this, connection, name]()

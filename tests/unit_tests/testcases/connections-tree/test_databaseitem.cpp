@@ -21,7 +21,7 @@ void TestDatabaseItem::testLoadKeys()
     //given
     ItemOperationsMock* operations = new ItemOperationsMock();
     QSharedPointer<Operations> operations_(dynamic_cast<Operations*>(operations));
-    operations->databases.append({0, 55});
+    operations->databases.insert(0, 55);
 
     for (int i=1; i < 100000; i++) {
         operations->keys.append(QString("test-%1-key").arg(i).toUtf8());
@@ -38,15 +38,13 @@ void TestDatabaseItem::testLoadKeys()
     qDebug() << parentItem->childCount();
     QSharedPointer<TreeItem> item = parentItem->child(0);
 
-    QSignalSpy spy((DatabaseItem*)item.data(), SIGNAL(keysLoaded(unsigned int)));
+    QSignalSpy spy(&dummyModel, &Model::itemChildsLoaded);
     item->handleEvent("click");
 
-    //then
-    QCOMPARE(spy.wait(), true);
+    //then    
     QCOMPARE(spy.count(), 1);
-    QCOMPARE(item->childCount(), (unsigned int)100001);    
-    QCOMPARE(item->getDisplayName(), QString("db0 (100002/55)"));
-    QCOMPARE(item->getIconUrl().isNull(), false);
+    QCOMPARE(item->childCount(), (unsigned int)100002);
+    QCOMPARE(item->getDisplayName(), QString("db0  (55) "));    
     QCOMPARE(item->getAllChilds().isEmpty(), false);
     QCOMPARE(item->isEnabled(), true);
     QCOMPARE(item->isLocked(), false);
@@ -56,8 +54,9 @@ void TestDatabaseItem::testUnloadKeys()
 {
     //given
     ItemOperationsMock* operations = new ItemOperationsMock();
+    Model model;
     DatabaseItem item(0, 300, QSharedPointer<Operations>(dynamic_cast<Operations*>(operations)),
-                      QWeakPointer<ConnectionsTree::TreeItem>());
+                      QWeakPointer<ConnectionsTree::TreeItem>(), model);
 
     //when
     item.unload();
